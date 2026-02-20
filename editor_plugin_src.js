@@ -9,14 +9,18 @@
  */
 
 (function() {
-	tinymce.create('tinymce.plugins.AdvancedHRPlugin', {
+	tinymce.create('tinymce.plugins.AdvancedImagePlugin', {
 		init : function(ed, url) {
 			// Register commands
-			ed.addCommand('mceAdvancedHr', function() {
+			ed.addCommand('mceAdvImage', function() {
+				// Internal image object like a flash placeholder
+				if (ed.dom.getAttrib(ed.selection.getNode(), 'class', '').indexOf('mceItem') != -1)
+					return;
+
 				ed.windowManager.open({
-					file : url + '/rule.htm',
-					width : 250 + parseInt(ed.getLang('advhr.delta_width', 0)),
-					height : 160 + parseInt(ed.getLang('advhr.delta_height', 0)),
+					file : url + '/image.htm',
+					width : 480 + parseInt(ed.getLang('advimage.delta_width', 0)),
+					height : 385 + parseInt(ed.getLang('advimage.delta_height', 0)),
 					inline : 1
 				}, {
 					plugin_url : url
@@ -24,34 +28,23 @@
 			});
 
 			// Register buttons
-			ed.addButton('advhr', {
-				title : 'advhr.advhr_desc',
-				cmd : 'mceAdvancedHr'
-			});
-
-			ed.onNodeChange.add(function(ed, cm, n) {
-				cm.setActive('advhr', n.nodeName == 'HR');
-			});
-
-			ed.onClick.add(function(ed, e) {
-				e = e.target;
-
-				if (e.nodeName === 'HR')
-					ed.selection.select(e);
+			ed.addButton('image', {
+				title : 'advimage.image_desc',
+				cmd : 'mceAdvImage'
 			});
 		},
 
 		getInfo : function() {
 			return {
-				longname : 'Advanced HR',
+				longname : 'Advanced image',
 				author : 'Moxiecode Systems AB',
 				authorurl : 'http://tinymce.moxiecode.com',
-				infourl : 'http://wiki.moxiecode.com/index.php/TinyMCE:Plugins/advhr',
+				infourl : 'http://wiki.moxiecode.com/index.php/TinyMCE:Plugins/advimage',
 				version : tinymce.majorVersion + "." + tinymce.minorVersion
 			};
 		}
 	});
 
 	// Register plugin
-	tinymce.PluginManager.add('advhr', tinymce.plugins.AdvancedHRPlugin);
+	tinymce.PluginManager.add('advimage', tinymce.plugins.AdvancedImagePlugin);
 })();
