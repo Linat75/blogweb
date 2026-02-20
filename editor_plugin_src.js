@@ -9,53 +9,168 @@
  */
 
 (function() {
-	tinymce.create('tinymce.plugins.AdvancedLinkPlugin', {
+	var each = tinymce.each;
+
+	tinymce.create('tinymce.plugins.AdvListPlugin', {
 		init : function(ed, url) {
-			this.editor = ed;
+			var t = this;
 
-			// Register commands
-			ed.addCommand('mceAdvLink', function() {
-				var se = ed.selection;
+			t.editor = ed;
 
-				// No selection and not in link
-				if (se.isCollapsed() && !ed.dom.getParent(se.getNode(), 'A'))
-					return;
+			function buildFormats(str) {
+				var formats = [];
 
-				ed.windowManager.open({
-					file : url + '/link.htm',
-					width : 480 + parseInt(ed.getLang('advlink.delta_width', 0)),
-					height : 400 + parseInt(ed.getLang('advlink.delta_height', 0)),
-					inline : 1
-				}, {
-					plugin_url : url
+				each(str.split(/,/), function(type) {
+					formats.push({
+						title : 'advlist.' + (type == 'default' ? 'def' : type.replace(/-/g, '_')),
+						styles : {
+							listStyleType : type == 'default' ? '' : type
+						}
+					});
 				});
-			});
 
-			// Register buttons
-			ed.addButton('link', {
-				title : 'advlink.link_desc',
-				cmd : 'mceAdvLink'
-			});
+				return formats;
+			};
 
-			ed.addShortcut('ctrl+k', 'advlink.advlink_desc', 'mceAdvLink');
+			// Setup number formats from config or default
+			t.numlist = ed.getParam("advlist_number_styles") || buildFormats("default,lower-alpha,lower-greek,lower-roman,upper-alpha,upper-roman");
+			t.bullist = ed.getParam("advlist_bullet_styles") || buildFormats("default,circle,disc,square");
 
-			ed.onNodeChange.add(function(ed, cm, n, co) {
-				cm.setDisabled('link', co && n.nodeName != 'A');
-				cm.setActive('link', n.nodeName == 'A' && !n.name);
-			});
+			if (tinymce.isIE && /MSIE [2-7]/.test(navigator.userAgent))
+				t.isIE7 = true;
+		},
+
+		createControl: function(name, cm) {
+			var t = this, btn, format, editor = t.editor;
+
+			if (name == 'numlist' || name == 'bullist') {
+				// Default to first item if it's a default item
+				if (t[name][0].title == 'advlist.def')
+					format = t[name][0];
+
+				function hasFormat(node, format) {
+					var state = true;
+
+					each(format.styles, function(value, name) {
+						// Format doesn't match
+						if (editor.dom.getStyle(node, name) != value) {
+							state = false;
+							return false;
+						}
+					});
+
+					return state;
+				};
+
+				function applyListFormat() {
+					var list, dom = editor.dom, sel = editor.selection;
+
+					// Check for existing list element
+					list = dom.getParent(sel.getNode(), 'ol,ul');
+
+					// Switch/add list type if needed
+					if (!list || list.nodeName == (name == 'bullist' ? 'OL' : 'UL') || hasFormat(list, format))
+						editor.execCommand(name == 'bullist' ? 'InsertUnorderedList' : 'InsertOrderedList');
+
+					// Append styles to new list element
+					if (format) {
+						list = dom.getParent(sel.getNode(), 'ol,ul');
+						if (list) {
+							dom.setStyles(list, format.styles);
+							list.removeAttribute('data-mce-style');
+						}
+					}
+
+					editor.focus();
+				};
+
+				btn = cm.createSplitButton(name, {
+					title : 'advanced.' + name + '_desc',
+					'class' : 'mce_' + name,
+					onclick : function() {
+						applyListFormat();
+					}
+				});
+
+				btn.onRenderMenu.add(function(btn, menu) {
+					menu.onHideMenu.add(function() {
+						if (t.bookmark) {
+							editor.selection.moveToBookmark(t.bookmark);
+							t.bookmark = 0;
+						}
+					});
+
+					menu.onShowMenu.add(function() {
+						var dom = editor.dom, list = dom.getParent(editor.selection.getNode(), 'ol,ul'), fmtList;
+
+						if (list || format) {
+							fmtList = t[name];
+
+							// Unselect existing items
+							each(menu.items, function(item) {
+								var state = true;
+
+								item.setSelected(0);
+
+								if (list && !item.isDisabled()) {
+									each(fmtList, function(fmt) {
+										if (fmt.id == item.id) {
+											if (!hasFormat(list, fmt)) {
+												state = false;
+												return false;
+											}
+										}
+									});
+
+									if (state)
+										item.setSelected(1);
+								}
+							});
+
+							// Select the current format
+							if (!list)
+								menu.items[format.id].setSelected(1);
+						}
+	
+						editor.focus();
+
+						// IE looses it's selection so store it away and restore it later
+						if (tinymce.isIE) {
+							t.bookmark = editor.selection.getBookmark(1);
+						}
+					});
+
+					menu.add({id : editor.dom.uniqueId(), title : 'advlist.types', 'class' : 'mceMenuItemTitle', titleItem: true}).setDisabled(1);
+
+					each(t[name], function(item) {
+						// IE<8 doesn't support lower-greek, skip it
+						if (t.isIE7 && item.styles.listStyleType == 'lower-greek')
+							return;
+
+						item.id = editor.dom.uniqueId();
+
+						menu.add({id : item.id, title : item.title, onclick : function() {
+							format = item;
+							applyListFormat();
+						}});
+					});
+				});
+
+				return btn;
+			}
 		},
 
 		getInfo : function() {
 			return {
-				longname : 'Advanced link',
+				longname : 'Advanced lists',
 				author : 'Moxiecode Systems AB',
 				authorurl : 'http://tinymce.moxiecode.com',
-				infourl : 'http://wiki.moxiecode.com/index.php/TinyMCE:Plugins/advlink',
+				infourl : 'http://wiki.moxiecode.com/index.php/TinyMCE:Plugins/advlist',
 				version : tinymce.majorVersion + "." + tinymce.minorVersion
 			};
 		}
 	});
 
 	// Register plugin
-	tinymce.PluginManager.add('advlink', tinymce.plugins.AdvancedLinkPlugin);
+	tinymce.PluginManager.add('advlist', tinymce.plugins.AdvListPlugin);
 })();
