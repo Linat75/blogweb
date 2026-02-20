@@ -9,112 +9,152 @@
  */
 
 (function() {
-	tinymce.create('tinymce.plugins.BBCodePlugin', {
-		init : function(ed, url) {
-			var t = this, dialect = ed.getParam('bbcode_dialect', 'punbb').toLowerCase();
+	var Event = tinymce.dom.Event, each = tinymce.each, DOM = tinymce.DOM;
 
-			ed.onBeforeSetContent.add(function(ed, o) {
-				o.content = t['_' + dialect + '_bbcode2html'](o.content);
+	/**
+	 * This plugin a context menu to TinyMCE editor instances.
+	 *
+	 * @class tinymce.plugins.ContextMenu
+	 */
+	tinymce.create('tinymce.plugins.ContextMenu', {
+		/**
+		 * Initializes the plugin, this will be executed after the plugin has been created.
+		 * This call is done before the editor instance has finished it's initialization so use the onInit event
+		 * of the editor instance to intercept that event.
+		 *
+		 * @method init
+		 * @param {tinymce.Editor} ed Editor instance that the plugin is initialized in.
+		 * @param {string} url Absolute URL to where the plugin is located.
+		 */
+		init : function(ed) {
+			var t = this, showMenu, contextmenuNeverUseNative, realCtrlKey;
+
+			t.editor = ed;
+
+			contextmenuNeverUseNative = ed.settings.contextmenu_never_use_native;
+
+			/**
+			 * This event gets fired when the context menu is shown.
+			 *
+			 * @event onContextMenu
+			 * @param {tinymce.plugins.ContextMenu} sender Plugin instance sending the event.
+			 * @param {tinymce.ui.DropMenu} menu Drop down menu to fill with more items if needed.
+			 */
+			t.onContextMenu = new tinymce.util.Dispatcher(this);
+
+			showMenu = ed.onContextMenu.add(function(ed, e) {
+				// Block TinyMCE menu on ctrlKey and work around Safari issue
+				if ((realCtrlKey !== 0 ? realCtrlKey : e.ctrlKey) && !contextmenuNeverUseNative)
+					return;
+
+				Event.cancel(e);
+
+				// Select the image if it's clicked. WebKit would other wise expand the selection
+				if (e.target.nodeName == 'IMG')
+					ed.selection.select(e.target);
+
+				t._getMenu(ed).showMenu(e.clientX || e.pageX, e.clientY || e.pageY);
+				Event.add(ed.getDoc(), 'click', function(e) {
+					hide(ed, e);
+				});
+
+				ed.nodeChanged();
 			});
 
-			ed.onPostProcess.add(function(ed, o) {
-				if (o.set)
-					o.content = t['_' + dialect + '_bbcode2html'](o.content);
+			ed.onRemove.add(function() {
+				if (t._menu)
+					t._menu.removeAll();
+			});
 
-				if (o.get)
-					o.content = t['_' + dialect + '_html2bbcode'](o.content);
+			function hide(ed, e) {
+				realCtrlKey = 0;
+
+				// Since the contextmenu event moves
+				// the selection we need to store it away
+				if (e && e.button == 2) {
+					realCtrlKey = e.ctrlKey;
+					return;
+				}
+
+				if (t._menu) {
+					t._menu.removeAll();
+					t._menu.destroy();
+					Event.remove(ed.getDoc(), 'click', hide);
+				}
+			};
+
+			ed.onMouseDown.add(hide);
+			ed.onKeyDown.add(hide);
+			ed.onKeyDown.add(function(ed, e) {
+				if (e.shiftKey && !e.ctrlKey && !e.altKey && e.keyCode === 121) {
+					Event.cancel(e);
+					showMenu(ed, e);
+				}
 			});
 		},
 
+		/**
+		 * Returns information about the plugin as a name/value array.
+		 * The current keys are longname, author, authorurl, infourl and version.
+		 *
+		 * @method getInfo
+		 * @return {Object} Name/value array containing information about the plugin.
+		 */
 		getInfo : function() {
 			return {
-				longname : 'BBCode Plugin',
+				longname : 'Contextmenu',
 				author : 'Moxiecode Systems AB',
 				authorurl : 'http://tinymce.moxiecode.com',
-				infourl : 'http://wiki.moxiecode.com/index.php/TinyMCE:Plugins/bbcode',
+				infourl : 'http://wiki.moxiecode.com/index.php/TinyMCE:Plugins/contextmenu',
 				version : tinymce.majorVersion + "." + tinymce.minorVersion
 			};
 		},
 
-		// Private methods
+		_getMenu : function(ed) {
+			var t = this, m = t._menu, se = ed.selection, col = se.isCollapsed(), el = se.getNode() || ed.getBody(), am, p;
 
-		// HTML -> BBCode in PunBB dialect
-		_punbb_html2bbcode : function(s) {
-			s = tinymce.trim(s);
+			if (m) {
+				m.removeAll();
+				m.destroy();
+			}
 
-			function rep(re, str) {
-				s = s.replace(re, str);
-			};
+			p = DOM.getPos(ed.getContentAreaContainer());
 
-			// example: <strong> to [b]
-			rep(/<a.*?href=\"(.*?)\".*?>(.*?)<\/a>/gi,"[url=$1]$2[/url]");
-			rep(/<font.*?color=\"(.*?)\".*?class=\"codeStyle\".*?>(.*?)<\/font>/gi,"[code][color=$1]$2[/color][/code]");
-			rep(/<font.*?color=\"(.*?)\".*?class=\"quoteStyle\".*?>(.*?)<\/font>/gi,"[quote][color=$1]$2[/color][/quote]");
-			rep(/<font.*?class=\"codeStyle\".*?color=\"(.*?)\".*?>(.*?)<\/font>/gi,"[code][color=$1]$2[/color][/code]");
-			rep(/<font.*?class=\"quoteStyle\".*?color=\"(.*?)\".*?>(.*?)<\/font>/gi,"[quote][color=$1]$2[/color][/quote]");
-			rep(/<span style=\"color: ?(.*?);\">(.*?)<\/span>/gi,"[color=$1]$2[/color]");
-			rep(/<font.*?color=\"(.*?)\".*?>(.*?)<\/font>/gi,"[color=$1]$2[/color]");
-			rep(/<span style=\"font-size:(.*?);\">(.*?)<\/span>/gi,"[size=$1]$2[/size]");
-			rep(/<font>(.*?)<\/font>/gi,"$1");
-			rep(/<img.*?src=\"(.*?)\".*?\/>/gi,"[img]$1[/img]");
-			rep(/<span class=\"codeStyle\">(.*?)<\/span>/gi,"[code]$1[/code]");
-			rep(/<span class=\"quoteStyle\">(.*?)<\/span>/gi,"[quote]$1[/quote]");
-			rep(/<strong class=\"codeStyle\">(.*?)<\/strong>/gi,"[code][b]$1[/b][/code]");
-			rep(/<strong class=\"quoteStyle\">(.*?)<\/strong>/gi,"[quote][b]$1[/b][/quote]");
-			rep(/<em class=\"codeStyle\">(.*?)<\/em>/gi,"[code][i]$1[/i][/code]");
-			rep(/<em class=\"quoteStyle\">(.*?)<\/em>/gi,"[quote][i]$1[/i][/quote]");
-			rep(/<u class=\"codeStyle\">(.*?)<\/u>/gi,"[code][u]$1[/u][/code]");
-			rep(/<u class=\"quoteStyle\">(.*?)<\/u>/gi,"[quote][u]$1[/u][/quote]");
-			rep(/<\/(strong|b)>/gi,"[/b]");
-			rep(/<(strong|b)>/gi,"[b]");
-			rep(/<\/(em|i)>/gi,"[/i]");
-			rep(/<(em|i)>/gi,"[i]");
-			rep(/<\/u>/gi,"[/u]");
-			rep(/<span style=\"text-decoration: ?underline;\">(.*?)<\/span>/gi,"[u]$1[/u]");
-			rep(/<u>/gi,"[u]");
-			rep(/<blockquote[^>]*>/gi,"[quote]");
-			rep(/<\/blockquote>/gi,"[/quote]");
-			rep(/<br \/>/gi,"\n");
-			rep(/<br\/>/gi,"\n");
-			rep(/<br>/gi,"\n");
-			rep(/<p>/gi,"");
-			rep(/<\/p>/gi,"\n");
-			rep(/&nbsp;|\u00a0/gi," ");
-			rep(/&quot;/gi,"\"");
-			rep(/&lt;/gi,"<");
-			rep(/&gt;/gi,">");
-			rep(/&amp;/gi,"&");
+			m = ed.controlManager.createDropMenu('contextmenu', {
+				offset_x : p.x + ed.getParam('contextmenu_offset_x', 0),
+				offset_y : p.y + ed.getParam('contextmenu_offset_y', 0),
+				constrain : 1,
+				keyboard_focus: true
+			});
 
-			return s; 
-		},
+			t._menu = m;
 
-		// BBCode -> HTML from PunBB dialect
-		_punbb_bbcode2html : function(s) {
-			s = tinymce.trim(s);
+			m.add({title : 'advanced.cut_desc', icon : 'cut', cmd : 'Cut'}).setDisabled(col);
+			m.add({title : 'advanced.copy_desc', icon : 'copy', cmd : 'Copy'}).setDisabled(col);
+			m.add({title : 'advanced.paste_desc', icon : 'paste', cmd : 'Paste'});
 
-			function rep(re, str) {
-				s = s.replace(re, str);
-			};
+			if ((el.nodeName == 'A' && !ed.dom.getAttrib(el, 'name')) || !col) {
+				m.addSeparator();
+				m.add({title : 'advanced.link_desc', icon : 'link', cmd : ed.plugins.advlink ? 'mceAdvLink' : 'mceLink', ui : true});
+				m.add({title : 'advanced.unlink_desc', icon : 'unlink', cmd : 'UnLink'});
+			}
 
-			// example: [b] to <strong>
-			rep(/\n/gi,"<br />");
-			rep(/\[b\]/gi,"<strong>");
-			rep(/\[\/b\]/gi,"</strong>");
-			rep(/\[i\]/gi,"<em>");
-			rep(/\[\/i\]/gi,"</em>");
-			rep(/\[u\]/gi,"<u>");
-			rep(/\[\/u\]/gi,"</u>");
-			rep(/\[url=([^\]]+)\](.*?)\[\/url\]/gi,"<a href=\"$1\">$2</a>");
-			rep(/\[url\](.*?)\[\/url\]/gi,"<a href=\"$1\">$1</a>");
-			rep(/\[img\](.*?)\[\/img\]/gi,"<img src=\"$1\" />");
-			rep(/\[color=(.*?)\](.*?)\[\/color\]/gi,"<font color=\"$1\">$2</font>");
-			rep(/\[code\](.*?)\[\/code\]/gi,"<span class=\"codeStyle\">$1</span>&nbsp;");
-			rep(/\[quote.*?\](.*?)\[\/quote\]/gi,"<span class=\"quoteStyle\">$1</span>&nbsp;");
+			m.addSeparator();
+			m.add({title : 'advanced.image_desc', icon : 'image', cmd : ed.plugins.advimage ? 'mceAdvImage' : 'mceImage', ui : true});
 
-			return s; 
+			m.addSeparator();
+			am = m.addMenu({title : 'contextmenu.align'});
+			am.add({title : 'contextmenu.left', icon : 'justifyleft', cmd : 'JustifyLeft'});
+			am.add({title : 'contextmenu.center', icon : 'justifycenter', cmd : 'JustifyCenter'});
+			am.add({title : 'contextmenu.right', icon : 'justifyright', cmd : 'JustifyRight'});
+			am.add({title : 'contextmenu.full', icon : 'justifyfull', cmd : 'JustifyFull'});
+
+			t.onContextMenu.dispatch(t, m, el, col);
+
+			return m;
 		}
 	});
 
 	// Register plugin
-	tinymce.PluginManager.add('bbcode', tinymce.plugins.BBCodePlugin);
+	tinymce.PluginManager.add('contextmenu', tinymce.plugins.ContextMenu);
 })();
