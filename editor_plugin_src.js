@@ -1,7 +1,7 @@
 /**
  * editor_plugin_src.js
  *
- * Copyright 2009, Moxiecode Systems AB
+ * Copyright 2011, Moxiecode Systems AB
  * Released under LGPL License.
  *
  * License: http://tinymce.moxiecode.com/license
@@ -9,168 +9,164 @@
  */
 
 (function() {
-	var each = tinymce.each;
+	tinymce.create('tinymce.plugins.AutolinkPlugin', {
+	/**
+	* Initializes the plugin, this will be executed after the plugin has been created.
+	* This call is done before the editor instance has finished it's initialization so use the onInit event
+	* of the editor instance to intercept that event.
+	*
+	* @param {tinymce.Editor} ed Editor instance that the plugin is initialized in.
+	* @param {string} url Absolute URL to where the plugin is located.
+	*/
 
-	tinymce.create('tinymce.plugins.AdvListPlugin', {
-		init : function(ed, url) {
-			var t = this;
+	init : function(ed, url) {
+		var t = this;
 
-			t.editor = ed;
+		// Internet Explorer has built-in automatic linking
+		if (tinyMCE.isIE)
+			return;
 
-			function buildFormats(str) {
-				var formats = [];
+		// Add a key down handler
+		ed.onKeyDown.add(function(ed, e) {
+			if (e.keyCode == 13)
+				return t.handleEnter(ed);
+			});
 
-				each(str.split(/,/), function(type) {
-					formats.push({
-						title : 'advlist.' + (type == 'default' ? 'def' : type.replace(/-/g, '_')),
-						styles : {
-							listStyleType : type == 'default' ? '' : type
-						}
-					});
-				});
+		ed.onKeyPress.add(function(ed, e) {
+			if (e.which == 41)
+				return t.handleEclipse(ed);
+		});
 
-				return formats;
-			};
+		// Add a key up handler
+		ed.onKeyUp.add(function(ed, e) {
+			if (e.keyCode == 32)
+				return t.handleSpacebar(ed);
+			});
+	       },
 
-			// Setup number formats from config or default
-			t.numlist = ed.getParam("advlist_number_styles") || buildFormats("default,lower-alpha,lower-greek,lower-roman,upper-alpha,upper-roman");
-			t.bullist = ed.getParam("advlist_bullet_styles") || buildFormats("default,circle,disc,square");
-
-			if (tinymce.isIE && /MSIE [2-7]/.test(navigator.userAgent))
-				t.isIE7 = true;
+		handleEclipse : function(ed) {
+			this.parseCurrentLine(ed, -1, '(', true);
 		},
 
-		createControl: function(name, cm) {
-			var t = this, btn, format, editor = t.editor;
+		handleSpacebar : function(ed) {
+			 this.parseCurrentLine(ed, 0, '', true);
+		 },
 
-			if (name == 'numlist' || name == 'bullist') {
-				// Default to first item if it's a default item
-				if (t[name][0].title == 'advlist.def')
-					format = t[name][0];
+		handleEnter : function(ed) {
+			this.parseCurrentLine(ed, -1, '', false);
+		},
 
-				function hasFormat(node, format) {
-					var state = true;
+		parseCurrentLine : function(ed, end_offset, delimiter, goback) {
+			var r, end, start, endContainer, bookmark, text, matches, prev, len;
 
-					each(format.styles, function(value, name) {
-						// Format doesn't match
-						if (editor.dom.getStyle(node, name) != value) {
-							state = false;
-							return false;
-						}
-					});
+			// We need at least five characters to form a URL,
+			// hence, at minimum, five characters from the beginning of the line.
+			r = ed.selection.getRng().cloneRange();
+			if (r.startOffset < 5) {
+				// During testing, the caret is placed inbetween two text nodes. 
+				// The previous text node contains the URL.
+				prev = r.endContainer.previousSibling;
+				if (prev == null) {
+					if (r.endContainer.firstChild == null || r.endContainer.firstChild.nextSibling == null)
+						return;
 
-					return state;
-				};
+					prev = r.endContainer.firstChild.nextSibling;
+				}
+				len = prev.length;
+				r.setStart(prev, len);
+				r.setEnd(prev, len);
 
-				function applyListFormat() {
-					var list, dom = editor.dom, sel = editor.selection;
+				if (r.endOffset < 5)
+					return;
 
-					// Check for existing list element
-					list = dom.getParent(sel.getNode(), 'ol,ul');
+				end = r.endOffset;
+				endContainer = prev;
+			} else {
+				endContainer = r.endContainer;
 
-					// Switch/add list type if needed
-					if (!list || list.nodeName == (name == 'bullist' ? 'OL' : 'UL') || hasFormat(list, format))
-						editor.execCommand(name == 'bullist' ? 'InsertUnorderedList' : 'InsertOrderedList');
+				// Get a text node
+				if (endContainer.nodeType != 3 && endContainer.firstChild) {
+					while (endContainer.nodeType != 3 && endContainer.firstChild)
+						endContainer = endContainer.firstChild;
 
-					// Append styles to new list element
-					if (format) {
-						list = dom.getParent(sel.getNode(), 'ol,ul');
-						if (list) {
-							dom.setStyles(list, format.styles);
-							list.removeAttribute('data-mce-style');
-						}
-					}
+					r.setStart(endContainer, 0);
+					r.setEnd(endContainer, endContainer.nodeValue.length);
+				}
 
-					editor.focus();
-				};
+				if (r.endOffset == 1)
+					end = 2;
+				else
+					end = r.endOffset - 1 - end_offset;
+			}
 
-				btn = cm.createSplitButton(name, {
-					title : 'advanced.' + name + '_desc',
-					'class' : 'mce_' + name,
-					onclick : function() {
-						applyListFormat();
-					}
-				});
+			start = end;
 
-				btn.onRenderMenu.add(function(btn, menu) {
-					menu.onHideMenu.add(function() {
-						if (t.bookmark) {
-							editor.selection.moveToBookmark(t.bookmark);
-							t.bookmark = 0;
-						}
-					});
+			do
+			{
+				// Move the selection one character backwards.
+				r.setStart(endContainer, end - 2);
+				r.setEnd(endContainer, end - 1);
+				end -= 1;
 
-					menu.onShowMenu.add(function() {
-						var dom = editor.dom, list = dom.getParent(editor.selection.getNode(), 'ol,ul'), fmtList;
+				// Loop until one of the following is found: a blank space, &nbsp;, delimeter, (end-2) >= 0
+			} while (r.toString() != ' ' && r.toString() != '' && r.toString().charCodeAt(0) != 160 && (end -2) >= 0 && r.toString() != delimiter);
 
-						if (list || format) {
-							fmtList = t[name];
+			if (r.toString() == delimiter || r.toString().charCodeAt(0) == 160) {
+				r.setStart(endContainer, end);
+				r.setEnd(endContainer, start);
+				end += 1;
+			} else if (r.startOffset == 0) {
+				r.setStart(endContainer, 0);
+				r.setEnd(endContainer, start);
+			}
+			else {
+				r.setStart(endContainer, end);
+				r.setEnd(endContainer, start);
+			}
 
-							// Unselect existing items
-							each(menu.items, function(item) {
-								var state = true;
+			text = r.toString();
+			matches = text.match(/^(https?:\/\/|ssh:\/\/|ftp:\/\/|file:\/|www\.)(.+)$/i);
 
-								item.setSelected(0);
+			if (matches) {
+				if (matches[1] == 'www.') {
+					matches[1] = 'http://www.';
+				}
 
-								if (list && !item.isDisabled()) {
-									each(fmtList, function(fmt) {
-										if (fmt.id == item.id) {
-											if (!hasFormat(list, fmt)) {
-												state = false;
-												return false;
-											}
-										}
-									});
+				bookmark = ed.selection.getBookmark();
 
-									if (state)
-										item.setSelected(1);
-								}
-							});
+				ed.selection.setRng(r);
+				tinyMCE.execCommand('createlink',false, matches[1] + matches[2]);
+				ed.selection.moveToBookmark(bookmark);
 
-							// Select the current format
-							if (!list)
-								menu.items[format.id].setSelected(1);
-						}
-	
-						editor.focus();
-
-						// IE looses it's selection so store it away and restore it later
-						if (tinymce.isIE) {
-							t.bookmark = editor.selection.getBookmark(1);
-						}
-					});
-
-					menu.add({id : editor.dom.uniqueId(), title : 'advlist.types', 'class' : 'mceMenuItemTitle', titleItem: true}).setDisabled(1);
-
-					each(t[name], function(item) {
-						// IE<8 doesn't support lower-greek, skip it
-						if (t.isIE7 && item.styles.listStyleType == 'lower-greek')
-							return;
-
-						item.id = editor.dom.uniqueId();
-
-						menu.add({id : item.id, title : item.title, onclick : function() {
-							format = item;
-							applyListFormat();
-						}});
-					});
-				});
-
-				return btn;
+				// TODO: Determine if this is still needed.
+				if (tinyMCE.isWebKit) {
+					// move the caret to its original position
+					ed.selection.collapse(false);
+					var max = Math.min(endContainer.length, start + 1);
+					r.setStart(endContainer, max);
+					r.setEnd(endContainer, max);
+					ed.selection.setRng(r);
+				}
 			}
 		},
 
+		/**
+		* Returns information about the plugin as a name/value array.
+		* The current keys are longname, author, authorurl, infourl and version.
+		*
+		* @return {Object} Name/value array containing information about the plugin.
+		*/
 		getInfo : function() {
 			return {
-				longname : 'Advanced lists',
+				longname : 'Autolink',
 				author : 'Moxiecode Systems AB',
 				authorurl : 'http://tinymce.moxiecode.com',
-				infourl : 'http://wiki.moxiecode.com/index.php/TinyMCE:Plugins/advlist',
+				infourl : 'http://wiki.moxiecode.com/index.php/TinyMCE:Plugins/autolink',
 				version : tinymce.majorVersion + "." + tinymce.minorVersion
 			};
 		}
 	});
 
 	// Register plugin
-	tinymce.PluginManager.add('advlist', tinymce.plugins.AdvListPlugin);
+	tinymce.PluginManager.add('autolink', tinymce.plugins.AutolinkPlugin);
 })();
